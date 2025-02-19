@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EC2 인스턴스 제어</title>
+    <script src="/js/tailwind.min.js"></script>
+    <style>
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #333;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 4px;
+            display: none;
+            animation: slideIn 0.2s, fadeOut 0.5s 2.5s;
+            z-index: 1000;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); }
+            to { transform: translateX(0); }
+        }
+        
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+            <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">EC2 인스턴스 제어</h1>
+            
+            <div id="instancesList" class="space-y-4 mb-6">
+                <!-- Instances will be dynamically inserted here -->
+            </div>
+            
+            <div id="statusDiv" class="bg-gray-50 rounded-lg p-4 mb-6 hidden">
+                준비중...
+            </div>
+            
+            <div id="controlButtons" class="flex space-x-4 justify-center hidden">
+                <button onclick="controlInstance('start')" 
+                        class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 flex items-center">
+                    <span class="loading-spinner hidden mr-2">
+                        <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </span>
+                    <span class="button-text">시작</span>
+                </button>
+                <button onclick="controlInstance('start1h')" 
+                        class="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 flex items-center">
+                    <span class="loading-spinner hidden mr-2">
+                        <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </span>
+                    <span class="button-text">1시간 시작</span>
+                </button>
+                <button onclick="controlInstance('stop')" 
+                        class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 flex items-center">
+                    <span class="loading-spinner hidden mr-2">
+                        <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </span>
+                    <span class="button-text">정지</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading indicator -->
+    <div id="loading" class="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center hidden">
+        <div class="text-center bg-white p-6 rounded-lg shadow-xl">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+            <p class="mt-4 text-gray-600">처리 중...</p>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        const ENDPOINT_ec2_control = '[your_lambda_endpoint]';
+        let currentInstanceId = null;
+        
+        const instances = [
+            {
+                title: "ai-test-128",
+                domain: "[domain_or_ip_of_instance]",
+                hostingId: "[hosted_zone_id]",
+                description: "인공지능 개발위한 서버",
+                instanceId: "[instance_id]",
+                icon: `<rect x="2" y="2" width="20" height="20" rx="2" ry="2"></rect><rect x="6" y="6" width="12" height="12" rx="1"></rect><path d="M12 6v12"></path><path d="M6 12h12"></path>`
+            },
+        ];
+
+        // 페이지 로드 시 인스턴스 목록 표시
+        document.addEventListener('DOMContentLoaded', () => {
+            renderInstances();
+        });
+
+        function renderInstances() {
+            const instancesList = document.getElementById('instancesList');
+            instancesList.innerHTML = instances.map(instance => `
+                <div onclick="selectInstance('${instance.instanceId}')" 
+                     class="block p-4 bg-white rounded-lg border ${currentInstanceId === instance.instanceId ? 'border-blue-500 bg-blue-50' : 'border-gray-200'} hover:border-blue-500 hover:shadow-md transition-all duration-200 cursor-pointer">
+                    <div class="flex items-start space-x-4">
+                        <div class="p-2 bg-blue-50 rounded-lg">
+                            <svg class="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                ${instance.icon}
+                            </svg>
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-semibold text-gray-800">${instance.title}</h2>
+                            <p class="text-sm text-gray-600 mt-1">${instance.domain}</p>
+                            <p class="text-sm text-gray-500 mt-1">${instance.description}</p>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function selectInstance(instanceId) {
+            currentInstanceId = instanceId;
+            renderInstances();
+            checkStatus();
+            document.getElementById('statusDiv').classList.remove('hidden');
+            document.getElementById('controlButtons').classList.remove('hidden');
+        }
+
+        function showLoading(action) {
+            // 클릭된 버튼의 로딩 스피너 표시
+            const buttons = document.querySelectorAll('#controlButtons button');
+            buttons.forEach(button => {
+                const spinner = button.querySelector('.loading-spinner');
+                if (button.textContent.trim().includes(getButtonText(action))) {
+                    spinner.classList.remove('hidden');
+                    button.disabled = true;
+                }
+            });
+        }
+
+        function hideLoading() {
+            // 모든 버튼의 로딩 스피너 숨기기
+            const buttons = document.querySelectorAll('#controlButtons button');
+            buttons.forEach(button => {
+                const spinner = button.querySelector('.loading-spinner');
+                spinner.classList.add('hidden');
+                button.disabled = false;
+            });
+        }
+
+        function getButtonText(action) {
+            switch(action) {
+                case 'start': return '시작';
+                case 'start1h': return '1시간 시작';
+                case 'stop': return '정지';
+                default: return '';
+            }
+        }
+
+        async function checkStatus() {
+            if (!currentInstanceId) return;
+            
+            showLoading();  // 로딩 표시 시작
+            
+            try {
+                const response = await fetch(`${ENDPOINT_ec2_control}?instanceId=${currentInstanceId}`);
+                const data = await response.json();
+                
+                if (response.status === 400) {
+                    alert(data.error);
+                    return;
+                }
+                
+                const statusDiv = document.getElementById('statusDiv');
+                const stateColorClass = data.state === 'running' ? 'text-green-600' : 'text-red-600';
+                
+                statusDiv.innerHTML = `
+                    <div class="space-y-2">
+                        <p class="text-gray-700">인스턴스 ID: <span class="font-medium">${data.instanceId}</span></p>
+                        <p class="text-gray-700">상태: <span class="font-medium ${stateColorClass}">${data.state}</span></p>
+                        <p class="text-gray-700">공인 IP: <span class="font-medium">${data.publicIp || '없음'}</span></p>
+                    </div>
+                `;
+            } catch (error) {
+                console.error('Error checking status:', error);
+                alert('인스턴스 상태를 확인하는 중 오류가 발생했습니다.');
+            } finally {
+                hideLoading();  // 로딩 표시 종료
+            }
+        }
+
+        function showToast(message, duration = 3000) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.style.display = 'block';
+            
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, duration);
+        }
+
+        function formatKoreanTime(utcTimeString) {
+            const date = new Date(utcTimeString);
+            return date.toLocaleString('ko-KR', {
+                timeZone: 'Asia/Seoul',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            });
+        }
+
+        async function controlInstance(action) {
+            if (!currentInstanceId) return;
+            
+            const selectedInstance = instances.find(instance => instance.instanceId === currentInstanceId);
+            if (!selectedInstance) return;
+
+            showLoading(action);  // 해당 버튼에만 로딩 표시
+
+            try {
+                const response = await fetch(`${ENDPOINT_ec2_control}?instanceId=${currentInstanceId}&action=${action}&domain=${selectedInstance.domain}&hostedZoneId=${selectedInstance.hostingId}`);
+                const data = await response.json();
+                
+                if (response.status === 400) {
+                    showToast(data.error);
+                    return;
+                }
+                
+                if (data.message.includes('자동 종료')) {
+                    const timeMatch = data.message.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
+                    if (timeMatch) {
+                        const koreanTime = formatKoreanTime(timeMatch[0]);
+                        data.message = data.message.replace(timeMatch[0], koreanTime);
+                    }
+                }
+                
+                showToast(data.message);
+                checkStatus();
+            } catch (error) {
+                console.error('Error controlling instance:', error);
+                showToast('인스턴스 제어 중 오류가 발생했습니다.');
+            } finally {
+                hideLoading();
+            }
+        }
+    </script>
+</body>
+</html>
